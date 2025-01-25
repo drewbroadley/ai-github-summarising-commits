@@ -23,6 +23,12 @@ For an example - see my commit history.
 
 **Watch the magic happen** .oO(✨)
 
+## Use Cases
+
+- Ensures a projects commit history is well documented
+- Build consistent style of commit messages across your organization
+- If you are a solo developer, ensure that you have a good summary of your work
+
 ## Author
 Drew Broadley
 drew@broadley.org.nz

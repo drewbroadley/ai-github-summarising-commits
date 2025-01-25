@@ -1,0 +1,62 @@
+name: AI Commit Analysis
+
+on: [push]
+
+jobs:
+  analyze-and-modify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Anthropic SDK
+        run: pip install anthropic
+
+      - name: Analyze and Update Commit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          author_name=$(git log -1 --pretty=format:"%an")
+          author_email=$(git log -1 --pretty=format:"%ae")
+          old_message=$(git log -1 --pretty=%B)
+          diff_output=$(git diff HEAD^)
+
+          cat > analyze.py << 'EOL'
+          from anthropic import Anthropic
+          import os
+          import json
+
+          anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+          diff = os.getenv('DIFF_OUTPUT')
+          old_msg = os.getenv('OLD_MESSAGE')
+
+          response = anthropic.messages.create(
+              model="claude-3-haiku-20240307",
+              max_tokens=1000,
+              system="Analyze the git diff and create a commit message. Return JSON with 'summary' (50 chars max) and 'description' fields.",
+              messages=[{
+                  "role": "user",
+                  "content": f"Original commit: {old_msg}\n\nDiff:\n{diff}\n\nRespond only with JSON: {{\"summary\": \"brief summary\", \"description\": \"detailed explanation\"}}"
+              }]
+          )
+          
+          print(response.content[0].text)
+          EOL
+
+          DIFF_OUTPUT="$diff_output" OLD_MESSAGE="$old_message" python analyze.py > commit_data.json
+
+          # Extract and create commit message
+          summary=$(python -c "import json; data=json.load(open('commit_data.json')); print(data['summary'])")
+          description=$(python -c "import json; data=json.load(open('commit_data.json')); print(data['description'])")
+          
+          modified_name="$author_name (auto)"
+          git config user.name "$modified_name"
+          git config user.email "$author_email"
+
+          printf "%s\n\n%s" "$summary" "$description" | git commit --amend --cleanup=strip --file=-
+          git push --force

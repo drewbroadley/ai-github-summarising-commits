@@ -1,0 +1,63 @@
+name: AI Commit Analysis
+
+on: [push]
+
+jobs:
+  analyze-and-modify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Google SDK
+        run: pip install google-generativeai
+
+      - name: Analyze and Update Commit
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          author_name=$(git log -1 --pretty=format:"%an")
+          author_email=$(git log -1 --pretty=format:"%ae")
+          old_message=$(git log -1 --pretty=%B)
+          diff_output=$(git diff HEAD^)
+
+          cat > analyze.py << 'EOL'
+          import google.generativeai as genai
+          import os
+          import json
+
+          genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+          model = genai.GenerativeModel('gemini-pro')
+          diff = os.getenv('DIFF_OUTPUT')
+          old_msg = os.getenv('OLD_MESSAGE')
+
+          response = model.generate_content(
+              prompt=f"""System: Analyze the git diff and create a commit message. Return JSON with 'summary' (50 chars max) and 'description' fields.
+              
+              Original commit: {old_msg}
+              
+              Diff:
+              {diff}
+              
+              Respond only with JSON: {{"summary": "brief summary", "description": "detailed explanation"}}""")
+          
+          print(response.text)
+          EOL
+
+          DIFF_OUTPUT="$diff_output" OLD_MESSAGE="$old_message" python analyze.py > commit_data.json
+
+          # Extract and create commit message
+          summary=$(python -c "import json; data=json.load(open('commit_data.json')); print(data['summary'])")
+          description=$(python -c "import json; data=json.load(open('commit_data.json')); print(data['description'])")
+          
+          modified_name="$author_name (auto)"
+          git config user.name "$modified_name"
+          git config user.email "$author_email"
+
+          printf "%s\n\n%s" "$summary" "$description" | git commit --amend --cleanup=strip --file=-
+          git push --force
